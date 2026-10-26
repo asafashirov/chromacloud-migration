@@ -142,7 +142,7 @@ with open("golden.jsonl", "w") as f:
 | `documents` | A `text` field on the document |
 | `metadatas` | Top-level document fields, filterable automatically |
 | Distance `l2` (default) / `cosine` / `ip` | Metric `euclidean` / `cosine` / `dotproduct` |
-| `where` filter | `filter` with `$eq`, `$ne`, `$gt`, `$gte`, `$lt`, `$lte`, `$in`, `$nin`, `$exists`, `$and`, `$or`, `$not` |
+| `where` filter | `filter` with `$eq`, `$ne`, `$gt`, `$gte`, `$lt`, `$lte`, `$in`, `$nin`, `$and`, `$or`. `$exists` and `$not` exist in Pinecone but aren't translated by the toolkit; rewrite those by hand |
 | `$contains` / `$not_contains` on an array key | `{"$in": [value]}` / `{"$nin": [value]}` |
 | `$contains` / `$not_contains` on a non-array key, `where_document` | No equivalent. Redesign these queries |
 
