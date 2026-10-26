@@ -28,6 +28,16 @@ The toolkit moves **one collection** that already has dense embeddings, document
 
 The cutover plan assumes your app pauses writes for the migration window. With writes paused, there are no updates or deletes to replay, so the export is a consistent snapshot and validation can compare the two stores exactly.
 
+## Use it with a coding agent
+
+The repo includes an [Agent Skills](https://agentskills.io) skill, [`skills/chroma-cloud-migration`](skills/chroma-cloud-migration/SKILL.md), that walks a coding agent such as Claude Code, Cursor, or Codex through these steps. It runs each script in order, stops on every failed check, and leaves the write pause and the cutover to you.
+
+```bash
+npx skills add pinecone-field/chromacloud-migration
+```
+
+Then ask your agent to migrate your Chroma Cloud collection to Pinecone.
+
 ## Requirements
 
 - [uv](https://docs.astral.sh/uv/getting-started/installation/). It installs Python 3.13 (pinned in `.python-version`) if you don't have it
