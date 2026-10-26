@@ -5,7 +5,7 @@ license: Apache-2.0
 compatibility: Needs uv and network access to Pinecone. A Pinecone API key for the index, load, and validation steps. Chroma Cloud credentials (API key, tenant, database) for the real migration; a local rehearsal needs none. Tested with Python 3.13, pinecone 10.2.0, and chromadb 1.5.9.
 metadata:
   author: Pinecone
-  version: 1.1.0
+  version: 1.2.0
   repository: https://github.com/pinecone-field/chromacloud-migration
   guide: https://www.pinecone.io/blog/migrate-chroma-cloud-to-pinecone/
 ---
@@ -20,10 +20,11 @@ Read these before running anything.
 
 1. **The user pauses writes and flips traffic. You never do.** Step 5 and Step 9 change production. Stop before each one, say exactly what the user needs to do, and wait for them to confirm it's done.
 2. **A non-zero exit means stop.** Every script exits 0 on success, 1 when a check fails, and 2 on a usage or precondition error. Explain the finding and fix the cause before the next step. The one expected exit 1 is preflight before the user has accepted its TRANSFORM findings (Step 1).
-3. **Never patch a failed load.** If a data check fails, fix the cause and reload into a new, empty namespace (for example `my-collection-v2`). An upsert-only pass for missing IDs can't remove records that were deleted in Chroma.
-4. **Repeat the policy flags on every preflight and convert run.** The policy flags are `--array-policy`, `--big-int-policy`, `--text-mode`, `--vector-field`, `--text-field`, `--id-field`, and `--id-prefix`. The scripts don't compare their flags with each other. A preflight run without them overwrites `preflight.json` with the defaults. The policies in use are recorded under `policies` in `preflight.json`; read them from there before each run.
-5. **Keep rehearsal and production apart.** A rehearsal uses its own workdir, index, and namespace. It never touches the production names.
-6. **Don't print secrets.** Check that environment variables are set without echoing their values. Use `your-key` as a placeholder in anything you show.
+3. **A filter that needs redesign blocks the flip, even on exit 0.** Preflight reports these as the warning `filters_need_redesign`, and `validate.py` marks `app_filters` as `warn`. Both still exit 0. Don't move to Step 9 until the app's query is redesigned and the parity check passes.
+4. **Never patch a failed load.** If a data check fails, fix the cause and reload into a new, empty namespace (for example `my-collection-v2`). An upsert-only pass for missing IDs can't remove records that were deleted in Chroma.
+5. **Repeat the policy flags on every preflight and convert run. Carry the field flags into `create_index.py` too.** The policy flags are `--array-policy`, `--big-int-policy`, `--text-mode`, `--vector-field`, `--text-field`, `--id-field`, and `--id-prefix`. The scripts don't compare their flags with each other. A preflight run without them overwrites `preflight.json` with the defaults. The policies in use are recorded under `policies` in `preflight.json`; read them from there before each run. `create_index.py` reads only the dimension and metric from that file. Step 3 has to pass the matching field flags itself.
+6. **Keep rehearsal and production apart.** A rehearsal uses its own workdir, index, and namespace. It never touches the production names.
+7. **Don't print secrets.** Check that environment variables are set without echoing their values. Use `your-key` as a placeholder in anything you show.
 
 In the commands below, `POLICY_FLAGS` stands for the policy flags chosen in Step 1, such as `--array-policy stringify`. Write them out in full each time. Don't put them in a shell variable: zsh doesn't split an unquoted variable into separate arguments.
 
@@ -112,13 +113,19 @@ Time the export and the load. Only a rehearsal that reads from Chroma Cloud size
 uv run create_index.py --index my-index --workdir migration_work
 ```
 
-It reads the dimension and metric from `preflight.json`. Chroma defaults to `l2`, which becomes `euclidean`. Add `--cloud` and `--region` for other locations, and suggest `--deletion-protection enabled` for production. If the index already exists, the script only checks its schema and exits 1 on a mismatch.
+It reads only the dimension and metric from `preflight.json`. Map the other policies onto its flags yourself:
+
+- `vector_field` other than `embedding`: pass `--vector-field` with the same name.
+- `text_field` other than `text`: pass `--text-field` with the same name.
+- `text_mode` of `fts`: pass `--full-text-search`, plus `--language` if the text isn't English.
+
+A mismatch makes `load.py` exit 1 later. Chroma defaults to `l2`, which becomes `euclidean`. Add `--cloud` and `--region` for other locations, and suggest `--deletion-protection enabled` for production. If the index already exists, the script only checks its schema and exits 1 on a mismatch.
 
 For long documents, use the full-text-search variant for preflight, index creation, and conversion. Use one path, not both:
 
 ```bash
 uv run preflight.py    --collection my_collection --workdir migration_work --text-mode fts POLICY_FLAGS --allow-transforms
-uv run create_index.py --index my-index --workdir migration_work --full-text-search
+uv run create_index.py --index my-index --workdir migration_work --full-text-search   # plus --vector-field / --text-field if not the defaults
 uv run convert.py      --workdir migration_work --text-mode fts POLICY_FLAGS
 ```
 
@@ -169,11 +176,11 @@ uv run validate.py --collection my_collection --index my-index --namespace my-co
                    --workdir migration_work --golden-queries golden.jsonl
 ```
 
-Add `--app-filters app_filters.json` if the app filters. Read `migration_work/validation_report.json` and report each check to the user by name. If a data check fails, follow critical rule 3. If only `app_filters` fails, the data is fine: fix the app's filter instead of reloading.
+Add `--app-filters app_filters.json` if the app filters. Read `migration_work/validation_report.json` and report each check to the user by name. If a data check fails, follow critical rule 4. If only `app_filters` fails, the data is fine: fix the app's filter instead of reloading.
 
 ### Step 9: Decision gate, then flip (the user does this)
 
-Summarize the validation report in a few lines and ask the user whether to flip. Rollback is still free at this point: the data is in Pinecone, but the app hasn't read or written there yet. If they flip, reads and writes move together through the Step 4 flag, then writes resume. Moving both at once means no write lands in a store the reads can't see.
+Summarize the validation report in a few lines. If any filter still needs redesign (critical rule 3), say so and don't offer the flip yet. Otherwise ask the user whether to flip. Rollback is still free at this point: the data is in Pinecone, but the app hasn't read or written there yet. If they flip, reads and writes move together through the Step 4 flag, then writes resume. Moving both at once means no write lands in a store the reads can't see.
 
 ### Step 10: Watch, then retire Chroma Cloud
 
@@ -181,7 +188,7 @@ After the flip, rolling back means replaying Pinecone writes into Chroma. Have t
 
 ## Past November 22
 
-Chroma Cloud is read-only from November 22, which enforces the write pause for you. Skip Step 5. Steps 6 through 9 still work until December 22, but the app's writes fail until it flips to Pinecone. Say this plainly if the user is starting late.
+Chroma Cloud is read-only from November 22, which enforces the write pause for you. Skip Step 5 and nothing else. Run Steps 1 through 4 first: preflight and policies, a short rehearsal, the index, and the shipped switch. Then run Steps 6 through 9 before December 22. The app's writes fail until it flips to Pinecone. Say this plainly if the user is starting late, and don't let the deadline justify skipping the index or the switch.
 
 ## Several collections
 
@@ -193,13 +200,13 @@ After each step, tell the user the exit code, the numbers that matter from that 
 
 ## Examples
 
-**A small collection with no filters.** The user says "Chroma Cloud is shutting down, move my `support_docs` collection to Pinecone." Preflight reports a 1,536-dimension `cosine` collection with two TRANSFORM findings, both renamed keys (`text` becomes `meta_text_<hash>`). Explain the rename, rerun with `--allow-transforms`, rehearse, create the index `support-docs`, and help the user add the switch. Stop for the write pause. Then export, convert, load into `support-docs-v1`, and validate with golden queries the user generates from their app. Report that every check passed and ask whether to flip.
+**A small collection with no filters.** The user says "Chroma Cloud is shutting down, move my `support_docs` collection to Pinecone." Preflight reports a 1,536-dimension `cosine` collection with two TRANSFORM findings, both renamed keys (`text` becomes `meta_text`, or a hashed name if `meta_text` is taken; `field_map.json` has the final names). Explain the rename, rerun with `--allow-transforms`, rehearse, create the index `support-docs`, and help the user add the switch. Stop for the write pause. Then export, convert, load into `support-docs-v1`, and validate with golden queries the user generates from their app. Report that every check passed and ask whether to flip.
 
 **Numeric arrays.** Preflight blocks with `non_string_arrays` on 75 records. Ask whether to fix them in Chroma or store them as strings. If the user picks strings, every later preflight and convert run carries `--array-policy stringify`.
 
 **Long documents.** Preflight blocks with `metadata_over_40kb`. Explain that document text counts toward the 40 KB metadata limit by default. Offer the full-text-search variant, which also makes the text keyword-searchable, and say what its own limits are. Rerun preflight with `--text-mode fts`, create the index with `--full-text-search`, and convert with `--text-mode fts`.
 
-**Starting after the cutoff.** On November 25 the user asks for help. Chroma Cloud is already read-only. Skip the pause, run Steps 6 through 9 now, and tell them the app's writes are failing until the flip.
+**Starting after the cutoff.** On November 25 the user asks for help. Chroma Cloud is already read-only. Tell them the app's writes are failing until the flip. Run Steps 1 through 4 as usual, skip Step 5, then run Steps 6 through 9.
 
 ## Troubleshooting
 

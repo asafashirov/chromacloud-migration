@@ -99,7 +99,7 @@ The full sequence:
 4. **Export.** `export.py` fails if the count changes during the export.
 5. **Convert and load** into a fresh, empty namespace.
 6. **Validate.** If a data check fails, stop, fix the cause, and reload into a new namespace (for example `my-collection-v2`). Don't patch gaps with an upsert-only pass: upserts can't remove records deleted in Chroma. If only `app_filters` fails, fix your app's filter instead.
-7. **Decision gate.** This is the last point where rollback is free, because nothing has been written to Pinecone yet.
+7. **Decision gate.** This is the last point where rollback is free. The data is in Pinecone, but your app hasn't read from it or written to it yet.
 8. **Flip reads and writes together**, then resume writes.
 9. **Monitor** errors, latency, and result quality. From here, rolling back means replaying Pinecone writes into Chroma.
 10. **Retire Chroma Cloud** before December 22. Remove Chroma client code, rotate or delete Chroma Cloud credentials, and archive `export.jsonl` with `field_map.json`, `id_map.jsonl`, and `transforms.jsonl`. You need all four files to reverse renames and ID mappings.

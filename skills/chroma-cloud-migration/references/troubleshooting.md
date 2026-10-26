@@ -52,6 +52,8 @@ Load this file when a script exits with anything other than 0.
 
 **`search_visible` times out.** Search can lag a load by several seconds. The validator waits up to 180 seconds (`--search-timeout`). Rerun once before treating it as a real failure.
 
+**`app_filters` is `warn`.** At least one filter needs redesign and wasn't compared. The run still exits 0, but don't flip until the app's query is rewritten (SKILL.md critical rule 3).
+
 **`app_filters` fails, everything else passes.** The data is fine. The translated filter returns different IDs than Chroma's. Redesign that filter in the app and don't reload.
 
 **`self_retrieval` misses.** A diagnostic that never fails the run. Common reasons: duplicate vectors, `dotproduct` with unnormalized vectors, near ties, approximate search, or freshness.
