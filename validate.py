@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate a Path A load against the (write-paused) Chroma collection.
+"""Validate a Pinecone load against the (write-paused) Chroma collection.
 
 Checks, in order:
   source_unchanged      collection.count() still equals the exported count

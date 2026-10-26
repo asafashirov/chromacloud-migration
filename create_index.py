@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Create (or verify) the Pinecone document index for Path A.
+"""Create (or verify) the Pinecone document index for the migration.
 
 Reads dimension and metric from preflight.json (Chroma l2 -> euclidean,
 cosine -> cosine, ip -> dotproduct). The schema declares one dense_vector
