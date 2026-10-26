@@ -5,7 +5,7 @@ Needs PINECONE_API_KEY in the environment. Creates indexes named
 chroma-mig-eng-<run>-{l2,cos,ip,fts} and deletes them at the end, even on
 failure. Every step has an expected exit code; the run fails if any differs.
 
-  python tests/smoke_test.py --scratch /path/to/empty/dir
+  uv run tests/smoke_test.py --scratch /path/to/empty/dir
 """
 
 from __future__ import annotations

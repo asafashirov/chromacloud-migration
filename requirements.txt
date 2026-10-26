@@ -1,3 +1,0 @@
-pinecone==10.2.0
-chromadb==1.5.9
-orjson==3.13.0

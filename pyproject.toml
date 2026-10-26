@@ -1,0 +1,14 @@
+[project]
+name = "chromacloud-migration"
+version = "0.1.0"
+description = "Migrate a Chroma Cloud collection to a Pinecone serverless index during a planned write pause"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "chromadb==1.5.9",
+    "orjson==3.13.0",
+    "pinecone==10.2.0",
+]
+
+[tool.uv]
+package = false

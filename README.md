@@ -26,7 +26,7 @@ The cutover plan assumes your app pauses writes for the migration window. With w
 
 ## Requirements
 
-- Python 3.10+ (tested on 3.13)
+- [uv](https://docs.astral.sh/uv/getting-started/installation/). It installs Python 3.13 (pinned in `.python-version`) if you don't have it
 - A Pinecone API key ([get one here](https://app.pinecone.io/))
 - Chroma Cloud credentials: API key, tenant, and database
 - Your app's query-embedding function, for the golden-query check in `validate.py`
@@ -36,11 +36,13 @@ The cutover plan assumes your app pauses writes for the migration window. With w
 ```bash
 git clone https://github.com/pinecone-field/chromacloud-migration.git
 cd chromacloud-migration
-pip install -r requirements.txt
+uv sync
 
 export PINECONE_API_KEY=...                         # all Pinecone steps
 export CHROMA_API_KEY=... CHROMA_TENANT=... CHROMA_DATABASE=...   # Chroma Cloud
 ```
+
+`uv sync` creates a virtual environment from `uv.lock`. Run each script with `uv run`, which uses that environment.
 
 Every script takes `--workdir DIR` (default `migration_work`). Each step reads the previous step's files from that directory and checks them by checksum. Scripts that read Chroma take `--collection NAME` and connect with `chromadb.CloudClient()`, which reads the three `CHROMA_*` variables. To rehearse against a local copy instead, add `--chroma-path PATH` to use `chromadb.PersistentClient`.
 
@@ -58,17 +60,17 @@ Replace `my_collection`, `my-index`, and `my-collection-v1` with your own names.
 
 ```bash
 # Before the pause: rehearse, then create the index
-python preflight.py --collection my_collection --workdir migration_work
-python preflight.py --collection my_collection --workdir migration_work --allow-transforms   # after reviewing TRANSFORM findings
-python create_index.py --index my-index --workdir migration_work
+uv run preflight.py --collection my_collection --workdir migration_work
+uv run preflight.py --collection my_collection --workdir migration_work --allow-transforms   # after reviewing TRANSFORM findings
+uv run create_index.py --index my-index --workdir migration_work
 
 # Pause app writes (reads stay on Chroma), then:
-python preflight.py --collection my_collection --workdir migration_work --allow-transforms
-python export.py    --collection my_collection --workdir migration_work
-python convert.py   --workdir migration_work
-python load.py      --index my-index --namespace my-collection-v1 --workdir migration_work
+uv run preflight.py --collection my_collection --workdir migration_work --allow-transforms
+uv run export.py    --collection my_collection --workdir migration_work
+uv run convert.py   --workdir migration_work
+uv run load.py      --index my-index --namespace my-collection-v1 --workdir migration_work
 # golden.jsonl holds query embeddings from your app's model (see "Golden queries" below)
-python validate.py  --collection my_collection --index my-index --namespace my-collection-v1 \
+uv run validate.py  --collection my_collection --index my-index --namespace my-collection-v1 \
                     --workdir migration_work --golden-queries golden.jsonl
 # optional: add --app-filters app_filters.json to compare your app's where filters
 
@@ -95,9 +97,9 @@ If you reach November 22 first, Chroma enforces the write pause for you. Steps 4
 Document text is stored as a metadata field by default and counts toward Pinecone's 40 KB metadata limit per record. If preflight reports `metadata_over_40kb` because of long documents, either split the text in the source or store it as a [full-text search](https://docs.pinecone.io/guides/search/full-text-search) field. Decide before you create the index, because the schema can't change later. Run these commands **instead of** the matching ones above:
 
 ```bash
-python preflight.py   --collection my_collection --workdir migration_work --text-mode fts --allow-transforms
-python create_index.py --index my-index --workdir migration_work --full-text-search
-python convert.py     --workdir migration_work --text-mode fts
+uv run preflight.py   --collection my_collection --workdir migration_work --text-mode fts --allow-transforms
+uv run create_index.py --index my-index --workdir migration_work --full-text-search
+uv run convert.py     --workdir migration_work --text-mode fts
 ```
 
 A full-text search field doesn't count toward the 40 KB limit, but each document must stay within 100 KB, 10,000 tokens, and 1,024 bytes per token. Preflight blocks documents over these limits. Unspaced CJK text tokenizes as one long token and can hit the per-token limit.
@@ -245,8 +247,8 @@ The overlap thresholds are heuristics; tune them for your data. `--golden-from-s
 ## Testing
 
 ```bash
-python tests/test_convert_unit.py                     # offline conversion rules
-PINECONE_API_KEY=... python tests/smoke_test.py --scratch /tmp/mig-smoke
+uv run tests/test_convert_unit.py                     # offline conversion rules
+PINECONE_API_KEY=... uv run tests/smoke_test.py --scratch /tmp/mig-smoke
 ```
 
 `smoke_test.py` builds edge-case collections in a local Chroma (`tests/build_fixtures.py`), runs every script with expected exit codes, and creates Pinecone indexes named `chroma-mig-eng-<run>-*`, which it deletes at the end. Run it against a Pinecone project you use for testing.
