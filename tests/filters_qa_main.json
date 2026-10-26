@@ -1,0 +1,16 @@
+[
+  {"name": "category_eq", "where": {"category": "news"}},
+  {"name": "year_range", "where": {"$and": [{"year": {"$gte": 2015}}, {"year": {"$lt": 2020}}]}},
+  {"name": "published_true", "where": {"published": true}},
+  {"name": "category_in", "where": {"category": {"$in": ["blog", "faq"]}}},
+  {"name": "tags_contains", "where": {"tags": {"$contains": "red"}}},
+  {"name": "tags_contains_non_ascii", "where": {"tags": {"$contains": "café"}}},
+  {"name": "ratings_contains_numeric", "where": {"ratings": {"$contains": 3}}},
+  {"name": "renamed_key_text", "where": {"text": "meta text value"}},
+  {"name": "tags_not_contains", "where": {"tags": {"$not_contains": "red"}}},
+  {"name": "category_ne", "where": {"category": {"$ne": "news"}}},
+  {"name": "category_nin", "where": {"category": {"$nin": ["news", "blog"]}}},
+  {"name": "category_contains_scalar", "where": {"category": {"$contains": "news"}}},
+  {"name": "document_substring", "where_document": {"$contains": "vector"}},
+  {"name": "document_regex", "where_document": {"$regex": "^The"}}
+]
