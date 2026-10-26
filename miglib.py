@@ -1,6 +1,6 @@
-"""Shared logic for the Chroma -> Pinecone "Path A" migration scripts.
+"""Shared logic for the Chroma Cloud -> Pinecone migration scripts.
 
-Path A moves one Chroma collection that already has dense embeddings into a
+The scripts move one Chroma collection that already has dense embeddings into a
 Pinecone document index (a schema with one dense_vector field), keeping the
 existing vectors, the document text and the metadata.
 
@@ -502,7 +502,7 @@ def add_convert_policy_args(parser) -> None:
     parser.add_argument("--big-int-policy", choices=["reject", "stringify"], default="reject",
                         help="Integers beyond 2^53: reject (default) or store as strings.")
     parser.add_argument("--text-mode", choices=["metadata", "fts"], default="metadata",
-                        help="metadata (default, Path A): document text is a metadata field and "
+                        help="metadata (default): document text is a metadata field and "
                         "counts toward the 40 KB limit. fts: the index declares the text field "
                         "with full_text_search (create_index.py --full-text-search).")
     parser.add_argument("--vector-field", default=DEFAULT_VECTOR_FIELD)
@@ -854,7 +854,7 @@ class Analyzer:
         emb_msgs = {
             "zero_vector": "All-zero vectors are rejected by Pinecone (400). Fix or remove these "
                            "records in the source first.",
-            "missing_embedding": "Record has no embedding; Path A needs one per record.",
+            "missing_embedding": "Record has no embedding; the migration needs one per record.",
             "empty_embedding": "Record has an empty embedding.",
             "non_finite_embedding": "Embedding contains NaN or Infinity.",
         }

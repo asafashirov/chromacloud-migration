@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Preflight: inspect one Chroma collection before a Path A migration.
+"""Preflight: inspect one Chroma collection before migrating it to Pinecone.
 
 Reports count, embedding dimension (and whether it is consistent), distance
 metric, metadata keys and value types, and ID validity for Pinecone, then
