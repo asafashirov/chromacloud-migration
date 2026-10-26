@@ -2,10 +2,10 @@
 name: chroma-cloud-migration
 description: Moves a Chroma Cloud collection to a Pinecone serverless index with the chromacloud-migration toolkit, reusing the existing embeddings. Runs preflight, index creation, export, conversion, load, and validation in order and stops at every failed check. Use when the user says "migrate off Chroma Cloud", "move my Chroma collection to Pinecone", "Chroma Cloud is shutting down", "export my Chroma Cloud data", or "replace Chroma with Pinecone". Also works on a local open-source Chroma directory. Not for moving Chroma into Postgres, and not for re-embedding data with a new model.
 license: Apache-2.0
-compatibility: Needs uv, network access to Chroma Cloud and Pinecone, a Pinecone API key, and Chroma Cloud credentials (API key, tenant, database). Tested with Python 3.13, pinecone 10.2.0, and chromadb 1.5.9.
+compatibility: Needs uv and network access to Pinecone. A Pinecone API key for the index, load, and validation steps. Chroma Cloud credentials (API key, tenant, database) for the real migration; a local rehearsal needs none. Tested with Python 3.13, pinecone 10.2.0, and chromadb 1.5.9.
 metadata:
   author: Pinecone
-  version: 1.0.0
+  version: 1.1.0
   repository: https://github.com/pinecone-field/chromacloud-migration
   guide: https://www.pinecone.io/blog/migrate-chroma-cloud-to-pinecone/
 ---
@@ -19,23 +19,29 @@ Chroma Cloud stops accepting writes on November 22, 2026 and stops serving reads
 Read these before running anything.
 
 1. **The user pauses writes and flips traffic. You never do.** Step 5 and Step 9 change production. Stop before each one, say exactly what the user needs to do, and wait for them to confirm it's done.
-2. **Exit code 1 means stop.** Every script exits 0 on success, 1 when a check fails, and 2 on a usage or precondition error. On anything other than 0, explain the finding and fix the cause before running the next step. Never continue past a failure.
+2. **A non-zero exit means stop.** Every script exits 0 on success, 1 when a check fails, and 2 on a usage or precondition error. Explain the finding and fix the cause before the next step. The one expected exit 1 is preflight before the user has accepted its TRANSFORM findings (Step 1).
 3. **Never patch a failed load.** If a data check fails, fix the cause and reload into a new, empty namespace (for example `my-collection-v2`). An upsert-only pass for missing IDs can't remove records that were deleted in Chroma.
-4. **Pass the same policy flags to `preflight.py` and `convert.py`.** These are `--array-policy`, `--big-int-policy`, `--text-mode`, and the field-name flags. Keep a note of the flags in use and repeat them.
-5. **Don't print secrets.** Check that environment variables are set without echoing their values. Use `your-key` as a placeholder in anything you show.
+4. **Repeat the policy flags on every preflight and convert run.** The policy flags are `--array-policy`, `--big-int-policy`, `--text-mode`, `--vector-field`, `--text-field`, `--id-field`, and `--id-prefix`. The scripts don't compare their flags with each other. A preflight run without them overwrites `preflight.json` with the defaults. The policies in use are recorded under `policies` in `preflight.json`; read them from there before each run.
+5. **Keep rehearsal and production apart.** A rehearsal uses its own workdir, index, and namespace. It never touches the production names.
+6. **Don't print secrets.** Check that environment variables are set without echoing their values. Use `your-key` as a placeholder in anything you show.
+
+In the commands below, `POLICY_FLAGS` stands for the policy flags chosen in Step 1, such as `--array-policy stringify`. Write them out in full each time. Don't put them in a shell variable: zsh doesn't split an unquoted variable into separate arguments.
 
 ## Before you start
 
 Ask the user for anything you don't already know:
 
 - The Chroma collection name, plus any other collections to move later.
-- A Pinecone index name and a namespace name (convention: the collection name plus `-v1`).
+- A Pinecone index name and a namespace name. Index names allow lowercase letters, digits, and hyphens only, up to 45 characters. Turn underscores into hyphens: collection `support_docs` becomes index `support-docs` and namespace `support-docs-v1`.
 - The cloud and region. AWS `us-east-1` works on every plan. Other regions need Standard or Enterprise.
 - Whether the app filters with `where` or `where_document`. If it does, collect the real filters for the parity check (see Step 1).
-- The function the app uses to embed search queries. Step 8 needs it to build golden queries.
+- The function and model the app uses to embed search queries. Step 8 needs it to build golden queries.
+- Where the app's vector-store code lives, for the switch in Step 4.
 - Today's date against November 22. After that date Chroma Cloud is already read-only (see "Past November 22" below).
 
-Set up from the repository root:
+If the user only wants an archive of their data, not a migration, run `export.py` alone (Step 6). It writes `export.jsonl` and a manifest with counts and a checksum, and needs no Pinecone key.
+
+Set up from the repository root. Skip the clone if the repository is already checked out:
 
 ```bash
 git clone https://github.com/pinecone-field/chromacloud-migration.git
@@ -51,9 +57,9 @@ for v in PINECONE_API_KEY CHROMA_API_KEY CHROMA_TENANT CHROMA_DATABASE; do
 done
 ```
 
-If one is missing, ask the user to `export` it in their terminal, or to put it in a `.env` file and run every script as `uv run --env-file .env <script>`. Don't assume your shell inherited it.
+The three `CHROMA_*` variables are needed only when reading from Chroma Cloud. A local rehearsal doesn't use them. `PINECONE_API_KEY` is needed from Step 3 on. If one that's needed is missing, ask the user to `export` it in their terminal, or to put it in a `.env` file and run every script as `uv run --env-file .env <script>`. Don't assume your shell inherited it.
 
-Every command below uses `--workdir migration_work`, `my_collection`, `my-index`, and `my-collection-v1`. Replace those with the user's names.
+The production commands below use `--workdir migration_work`, `my_collection`, `my-index`, and `my-collection-v1`. Replace those with the user's names.
 
 ## Workflow
 
@@ -63,25 +69,42 @@ Every command below uses `--workdir migration_work`, `my_collection`, `my-index`
 uv run preflight.py --collection my_collection --workdir migration_work
 ```
 
+For a local open-source Chroma directory, add `--chroma-path PATH`. Only `preflight.py`, `export.py`, and `validate.py` read Chroma, and only they take that flag.
+
 Preflight reads the whole collection and writes `migration_work/preflight.json`. Findings come in four levels:
 
-- **BLOCKING** findings must be fixed in Chroma before the write pause. Examples: all-zero vectors, mixed dimensions, metadata over 40 KB, numeric or boolean arrays.
-- **TRANSFORM** findings are changes the conversion will make, such as new IDs, renamed metadata keys, and dropped `None` values. Explain each one and what the app has to change because of it (see `references/app-changes.md`).
-- **WARNING** and **INFO** findings need no action, but tell the user about any warning.
+- **BLOCKING** findings stop the migration until they're fixed. Some need a fix in Chroma before the write pause: all-zero vectors (`zero_vector`), mixed dimensions (`inconsistent_dimension`), values Pinecone can't store (`unsupported_value_types`). Others have a policy flag instead, listed below. With the flag, preflight reports them as TRANSFORM.
+- **TRANSFORM** findings are changes the conversion will make: new IDs, renamed metadata keys, dropped `None` values, and anything a policy flag converts. Explain each one and what the app has to change because of it (see `references/app-changes.md`).
+- **WARNING** findings need a decision from the user even though preflight still exits 0. Two matter most. `metadata_near_40kb` means a record is close to the limit. Settle it before Step 3, because the index schema can't change after that. A filter reported as needing redesign has no Pinecone equivalent. The app's query has to change before the cutover.
+- **INFO** findings need no action. Mention them briefly.
 
 Choose policies with the user rather than for them:
 
 - `non_string_arrays`: Pinecone lists hold strings only. Either fix the arrays in Chroma or add `--array-policy stringify`, which turns `3` into `"3"`. Range filters on those fields stop working.
 - Integers above 2^53: Pinecone would round them. `--big-int-policy stringify` stores them as strings.
-- `metadata_over_40kb` from long documents: switch to the full-text-search variant in Step 3 now. The index schema can't change after creation.
+- `metadata_over_40kb` from long documents: use the full-text-search variant in Step 3. It moves the text out of the 40 KB metadata limit but adds its own limits: 100 KB and 10,000 tokens per document, and 1,024 bytes per token. A document that's one very long word still fails. Decide now, because the schema can't change later.
 
-If the app uses filters, write them to `app_filters.json` as a JSON list of `{"name": ..., "where": ...}` or `{"name": ..., "where_document": ...}` objects. Then rerun with `--app-filters app_filters.json`. Preflight reports which filters translate and which need redesign.
+If the app uses filters, write them to `app_filters.json` as a JSON list of `{"name": ..., "where": ...}` or `{"name": ..., "where_document": ...}` objects. Add `--app-filters app_filters.json` to the preflight run. It reports which filters translate and which need redesign.
 
-Once the user accepts the TRANSFORM findings, rerun with the same flags plus `--allow-transforms`. Exit 0 here is the gate for Step 2.
+Preflight exits 1 until the user accepts the TRANSFORM findings. That exit is expected. Once they accept, rerun with the chosen flags plus `--allow-transforms`:
+
+```bash
+uv run preflight.py --collection my_collection --workdir migration_work POLICY_FLAGS --allow-transforms
+```
+
+Exit 0 here is the gate for Step 2.
 
 ### Step 2: Rehearse and size the window
 
-Run Steps 3, 6, 7, and 8 against a copy or a small collection first. A local open-source copy works: add `--chroma-path PATH` to the scripts that read Chroma. Time the export and the load. That time, plus validation, is the write-pause window the user needs to schedule. Don't estimate a duration from anything else.
+Rehearse Steps 3, 6, 7, and 8 before the real run. Keep everything separate from production:
+
+- Workdir `migration_rehearsal`, index `my-index-rehearsal`, namespace `my-collection-rehearsal`.
+- Run preflight again in that workdir first, with the same `POLICY_FLAGS` and `--allow-transforms`.
+- The source can be a local copy (`--chroma-path PATH`) or a small collection in Chroma Cloud.
+- If the app's embedding function isn't available yet, validate with `--golden-from-sample 20` instead of `--golden-queries`. It builds queries from perturbed stored vectors. Use it for rehearsal only, never to approve the real cutover.
+- Skip Step 4. The app switch isn't part of a rehearsal.
+
+Time the export and the load. Only a rehearsal that reads from Chroma Cloud sizes the write pause, because network transfer dominates a cloud export. A local export finishes in seconds and says nothing about the real window. Don't estimate a duration from anything else. When the rehearsal is done, ask the user whether to delete the rehearsal index.
 
 ### Step 3: Create the index
 
@@ -94,9 +117,9 @@ It reads the dimension and metric from `preflight.json`. Chroma defaults to `l2`
 For long documents, use the full-text-search variant for preflight, index creation, and conversion. Use one path, not both:
 
 ```bash
-uv run preflight.py    --collection my_collection --workdir migration_work --text-mode fts --allow-transforms
+uv run preflight.py    --collection my_collection --workdir migration_work --text-mode fts POLICY_FLAGS --allow-transforms
 uv run create_index.py --index my-index --workdir migration_work --full-text-search
-uv run convert.py      --workdir migration_work --text-mode fts
+uv run convert.py      --workdir migration_work --text-mode fts POLICY_FLAGS
 ```
 
 ### Step 4: Ship the switch, pointed at Chroma
@@ -105,10 +128,10 @@ The app needs one config flag that moves reads and writes from Chroma to Pinecon
 
 ### Step 5: Pause writes (the user does this)
 
-Stop and ask the user to set the app to read-only. Reads stay on Chroma. Once they confirm, rerun preflight with the exact flags from Step 1:
+Stop and ask the user to set the app to read-only. Reads stay on Chroma. Once they confirm, rerun preflight with the same flags as Step 1:
 
 ```bash
-uv run preflight.py --collection my_collection --workdir migration_work --allow-transforms
+uv run preflight.py --collection my_collection --workdir migration_work POLICY_FLAGS --allow-transforms
 ```
 
 ### Step 6: Export
@@ -122,11 +145,11 @@ Exit 1 almost always means writes are still landing: the count changed during th
 ### Step 7: Convert and load
 
 ```bash
-uv run convert.py --workdir migration_work
+uv run convert.py --workdir migration_work POLICY_FLAGS
 uv run load.py    --index my-index --namespace my-collection-v1 --workdir migration_work
 ```
 
-Give `convert.py` the same policy flags as preflight. If any record fails, it writes no `documents.jsonl` and keeps `transforms.jsonl.failed` for review. `load.py` needs a new or empty namespace and can resume with `--resume` after an interruption.
+If any record fails, convert writes no `documents.jsonl` and keeps `transforms.jsonl.failed` for review. `load.py` needs a new or empty namespace and can resume with `--resume` after an interruption.
 
 ### Step 8: Validate
 
@@ -150,7 +173,7 @@ Add `--app-filters app_filters.json` if the app filters. Read `migration_work/va
 
 ### Step 9: Decision gate, then flip (the user does this)
 
-Summarize the validation report in a few lines and ask the user whether to flip. Rollback is still free at this point, because nothing has been written to Pinecone. If they flip, reads and writes move together through the Step 4 flag, then writes resume. Moving both at once means no write lands in a store the reads can't see.
+Summarize the validation report in a few lines and ask the user whether to flip. Rollback is still free at this point: the data is in Pinecone, but the app hasn't read or written there yet. If they flip, reads and writes move together through the Step 4 flag, then writes resume. Moving both at once means no write lands in a store the reads can't see.
 
 ### Step 10: Watch, then retire Chroma Cloud
 
@@ -170,9 +193,11 @@ After each step, tell the user the exit code, the numbers that matter from that 
 
 ## Examples
 
-**A small collection with no filters.** The user says "Chroma Cloud is shutting down, move my `support_docs` collection to Pinecone." Preflight reports a 1,536-dimension `cosine` collection with two TRANSFORM findings, both renamed keys (`text` becomes `meta_text_<hash>`). Explain the rename, rerun with `--allow-transforms`, create the index, and help the user add the switch. Stop for the write pause. Then export, convert, load, and validate with golden queries the user generates from their app. Report that every check passed and ask whether to flip.
+**A small collection with no filters.** The user says "Chroma Cloud is shutting down, move my `support_docs` collection to Pinecone." Preflight reports a 1,536-dimension `cosine` collection with two TRANSFORM findings, both renamed keys (`text` becomes `meta_text_<hash>`). Explain the rename, rerun with `--allow-transforms`, rehearse, create the index `support-docs`, and help the user add the switch. Stop for the write pause. Then export, convert, load into `support-docs-v1`, and validate with golden queries the user generates from their app. Report that every check passed and ask whether to flip.
 
-**Long documents.** Preflight blocks with `metadata_over_40kb`. Explain that document text counts toward the 40 KB metadata limit by default. Offer the full-text-search variant, which also makes the text keyword-searchable. Rerun preflight with `--text-mode fts`, create the index with `--full-text-search`, and convert with `--text-mode fts`.
+**Numeric arrays.** Preflight blocks with `non_string_arrays` on 75 records. Ask whether to fix them in Chroma or store them as strings. If the user picks strings, every later preflight and convert run carries `--array-policy stringify`.
+
+**Long documents.** Preflight blocks with `metadata_over_40kb`. Explain that document text counts toward the 40 KB metadata limit by default. Offer the full-text-search variant, which also makes the text keyword-searchable, and say what its own limits are. Rerun preflight with `--text-mode fts`, create the index with `--full-text-search`, and convert with `--text-mode fts`.
 
 **Starting after the cutoff.** On November 25 the user asks for help. Chroma Cloud is already read-only. Skip the pause, run Steps 6 through 9 now, and tell them the app's writes are failing until the flip.
 

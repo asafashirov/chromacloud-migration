@@ -44,8 +44,8 @@ Use the field names from `field_map.json`. The defaults are `embedding` for the 
 
 ## What the app has to handle
 
-- **IDs.** Chroma IDs that Pinecone can't accept became `chroma-sha256-<hash>`, listed in `id_map.jsonl`. Each remapped document also stores the original ID in `chroma_id`. Anywhere the app reads, updates, or deletes by ID, it must use the new ID or look it up through `chroma_id`.
-- **Renamed metadata keys.** Update filters and reads to the names in `field_map.json`.
+- **IDs.** Chroma IDs that Pinecone can't accept got new IDs, listed in `id_map.jsonl`. Most look like `chroma-sha256-<hash>`, but one gets a `-2` suffix when the plain form is already taken. Never rebuild an ID by hashing. Always look it up in `id_map.jsonl`. Each remapped document also stores the original ID in the `chroma_id` field. Anywhere the app reads, updates, or deletes by ID, it must use the new ID or look it up through that field.
+- **Renamed metadata keys.** Update filters and reads to the names in `field_map.json`. Watch for keys that collided with a reserved name. If the collection already had a metadata key named `chroma_id`, `text`, or `embedding`, it was renamed (for example to `meta_chroma_id`). The reserved name now means something else, with no error to warn you.
 - **Filters.** `where` filters carry over with Pinecone's operators (`$eq`, `$ne`, `$gt`, `$gte`, `$lt`, `$lte`, `$in`, `$nin`, `$exists`, `$and`, `$or`, `$not`). `$contains` on an array key becomes `{"$in": [value]}`, and `$not_contains` becomes `{"$nin": [value]}`. `$contains` on a non-array key, and any `where_document` substring or regex filter, has no equivalent. Those queries need redesign. Pinecone's text-match operators work only on a full-text-search field, which exists only if the index was created with `--full-text-search`.
 - **Stringified arrays.** With `--array-policy stringify`, numbers in arrays became strings. Range filters on those fields no longer work.
 - **Numbers.** Pinecone stores numbers as 64-bit floats. An integer reads back as a float (1 becomes 1.0). Compare accordingly.
