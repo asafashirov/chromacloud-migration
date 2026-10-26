@@ -9,6 +9,10 @@ Chroma is [winding down Chroma Cloud](https://www.trychroma.com/cloud-wind-down)
 
 Open-source Chroma is not affected.
 
+## Disclaimer
+
+This toolkit is provided as-is, with **no guarantees**. It may not fit your collection, embedding setup, or cutover plan. Before you pause writes or flip production traffic, run the scripts yourself against your own data, review every finding, and confirm that validation matches what your app needs. You are responsible for verifying the migration works for your use case.
+
 ## What this does
 
 The toolkit moves **one collection** that already has dense embeddings, document text, and metadata into a Pinecone document index. Your existing vectors are reused, so nothing is re-embedded and your app keeps its embedding model. To move several collections, run it once per collection.
